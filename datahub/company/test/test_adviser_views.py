@@ -1,9 +1,88 @@
+import pytest
 from rest_framework import status
 from rest_framework.reverse import reverse
 
 from datahub.company.test.factories import AdviserFactory
 from datahub.core.test_utils import APITestMixin, create_test_user
 from datahub.metadata.test.factories import TeamFactory
+
+
+@pytest.fixture
+def advisers():
+    """Fixture that creates a fixed set of advisers."""
+    factory_kwarg_list = (
+        {
+            'first_name': 'John',
+            'last_name': 'Gravy',
+            'dit_team__name': 'Johannesburg',
+        },
+        {
+            'first_name': 'Elisabeth',
+            'last_name': 'Gravy',
+            'dit_team__name': 'Johannesburg',
+        },
+        {
+            'first_name': 'Anna',
+            'last_name': 'George',
+            'dit_team__name': 'London',
+        },
+        {
+            'first_name': 'Neil',
+            'last_name': 'Coldman',
+            'dit_team__name': 'London',
+        },
+        {
+            'first_name': 'Trent',
+            'last_name': 'Nort',
+            'dit_team__name': 'London',
+        },
+        {
+            'first_name': 'Roger',
+            'last_name': 'Grates',
+            'dit_team__name': 'London',
+        },
+        {
+            'first_name': 'Roger',
+            'last_name': 'Grates',
+            'dit_team__name': 'Lisbon',
+        },
+        {
+            'first_name': 'Jennifer',
+            'last_name': 'Cakeman',
+            'dit_team__name': 'New York',
+        },
+        {
+            'first_name': 'Nigel',
+            'last_name': 'Newman',
+            'dit_team__name': 'New York',
+        },
+        {
+            # with middle name
+            'first_name': 'Amy Sarah',
+            'last_name': 'Dacre',
+            'dit_team__name': 'New York',
+        },
+        {
+            'first_name': 'Jessica',
+            # with hyphen
+            'last_name': 'Samson-James',
+            'dit_team__name': 'New York',
+        },
+        {
+            'first_name': 'Jo',
+            # with straight apostrophe
+            'last_name': "O'Conner",
+            'dit_team__name': 'New York',
+        },
+        {
+            'first_name': 'Mary',
+            # with curly apostrophe
+            'last_name': 'O’Conner',
+            'dit_team__name': 'New York',
+        },
+    )
+
+    yield [AdviserFactory(**kwargs) for kwargs in factory_kwarg_list]
 
 
 class TestAdviser(APITestMixin):
@@ -59,3 +138,203 @@ class TestAdviser(APITestMixin):
             'f sorted adviser',
             'z sorted adviser',
         ]
+
+    @pytest.mark.parametrize(
+        'terms,expected_results',
+        (
+            (
+                # passing an empty string is the same as omitting the parameter
+                # (returns all advisers)
+                '',
+                [
+                    ('Amy Sarah', 'Dacre', 'New York'),
+                    ('Anna', 'George', 'London'),
+                    ('Elisabeth', 'Gravy', 'Johannesburg'),
+                    ('Jennifer', 'Cakeman', 'New York'),
+                    ('Jessica', 'Samson-James', 'New York'),
+                    ('Jo', "O'Conner", 'New York'),
+                    ('John', 'Gravy', 'Johannesburg'),
+                    ('Mary', 'O’Conner', 'New York'),
+                    ('Neil', 'Coldman', 'London'),
+                    ('Nigel', 'Newman', 'New York'),
+                    ('Roger', 'Grates', 'Lisbon'),
+                    ('Roger', 'Grates', 'London'),
+                    # default test user
+                    ('Testo', 'Useri', 'Aberdeen City Council'),
+                    ('Trent', 'Nort', 'London'),
+                ],
+            ),
+            (
+                # nothing odd should happen with special characters
+                r"/\.*+?|'()[]{}",  # noqa: P103
+                [],
+            ),
+            (
+                'acre',
+                [],
+            ),
+            (
+                'Conner',
+                [
+                    ('Jo', "O'Conner", 'New York'),
+                    ('Mary', 'O’Conner', 'New York'),
+                ],
+            ),
+            (
+                'conner new york',
+                [
+                    ('Jo', "O'Conner", 'New York'),
+                    ('Mary', 'O’Conner', 'New York'),
+                ],
+            ),
+            (
+                # with typo
+                'connner new york',
+                [],
+            ),
+            (
+                'conner new york london',
+                [],
+            ),
+            (
+                'Gr',
+                [
+                    ('Elisabeth', 'Gravy', 'Johannesburg'),
+                    ('John', 'Gravy', 'Johannesburg'),
+                    ('Roger', 'Grates', 'Lisbon'),
+                    ('Roger', 'Grates', 'London'),
+                ],
+            ),
+            (
+                'J',
+                [
+                    ('Jennifer', 'Cakeman', 'New York'),
+                    ('Jessica', 'Samson-James', 'New York'),
+                    ('Jo', "O'Conner", 'New York'),
+                    ('John', 'Gravy', 'Johannesburg'),
+                    ('Elisabeth', 'Gravy', 'Johannesburg'),
+                ],
+            ),
+            (
+                'Ja',
+                [
+                    ('Jessica', 'Samson-James', 'New York'),
+                ],
+            ),
+            (
+                'Jo',
+                [
+                    ('Jo', "O'Conner", 'New York'),
+                    ('John', 'Gravy', 'Johannesburg'),
+                    ('Elisabeth', 'Gravy', 'Johannesburg'),
+                ],
+            ),
+            (
+                'Joh',
+                [
+                    ('John', 'Gravy', 'Johannesburg'),
+                    ('Elisabeth', 'Gravy', 'Johannesburg'),
+                ],
+            ),
+            (
+                'N',
+                [
+                    ('Neil', 'Coldman', 'London'),
+                    ('Nigel', 'Newman', 'New York'),
+                    ('Trent', 'Nort', 'London'),
+                    ('Amy Sarah', 'Dacre', 'New York'),
+                    ('Jennifer', 'Cakeman', 'New York'),
+                    ('Jessica', 'Samson-James', 'New York'),
+                    ('Jo', "O'Conner", 'New York'),
+                    ('Mary', 'O’Conner', 'New York'),
+                ],
+            ),
+            (
+                'Ne',
+                [
+                    ('Neil', 'Coldman', 'London'),
+                    ('Nigel', 'Newman', 'New York'),
+                    ('Amy Sarah', 'Dacre', 'New York'),
+                    ('Jennifer', 'Cakeman', 'New York'),
+                    ('Jessica', 'Samson-James', 'New York'),
+                    ('Jo', "O'Conner", 'New York'),
+                    ('Mary', 'O’Conner', 'New York'),
+                ],
+            ),
+            (
+                'New',
+                [
+                    ('Nigel', 'Newman', 'New York'),
+                    ('Amy Sarah', 'Dacre', 'New York'),
+                    ('Jennifer', 'Cakeman', 'New York'),
+                    ('Jessica', 'Samson-James', 'New York'),
+                    ('Jo', "O'Conner", 'New York'),
+                    ('Mary', 'O’Conner', 'New York'),
+                ],
+            ),
+            (
+                'ne lo',
+                [
+                    ('Neil', 'Coldman', 'London'),
+                ],
+            ),
+            (
+                'Ne Yo',
+                [
+                    ('Nigel', 'Newman', 'New York'),
+                    ('Amy Sarah', 'Dacre', 'New York'),
+                    ('Jennifer', 'Cakeman', 'New York'),
+                    ('Jessica', 'Samson-James', 'New York'),
+                    ('Jo', "O'Conner", 'New York'),
+                    ('Mary', 'O’Conner', 'New York'),
+                ],
+            ),
+            (
+                'Ni',
+                [
+                    ('Nigel', 'Newman', 'New York'),
+                ],
+            ),
+            (
+                'Sa',
+                [
+                    ('Amy Sarah', 'Dacre', 'New York'),
+                    ('Jessica', 'Samson-James', 'New York'),
+                ],
+            ),
+            (
+                'York',
+                [
+                    ('Amy Sarah', 'Dacre', 'New York'),
+                    ('Jennifer', 'Cakeman', 'New York'),
+                    ('Jessica', 'Samson-James', 'New York'),
+                    ('Jo', "O'Conner", 'New York'),
+                    ('Mary', 'O’Conner', 'New York'),
+                    ('Nigel', 'Newman', 'New York'),
+                ],
+            ),
+            (
+                'zzz',
+                [],
+            ),
+        ),
+    )
+    def test_adviser_autocomplete(self, advisers, terms, expected_results):
+        """Tests the adviser autocomplete feature."""
+        url = reverse('api-v1:advisor-list')
+        response = self.api_client.get(
+            url,
+            data={
+                'autocomplete': terms,
+            },
+        )
+        assert response.status_code == status.HTTP_200_OK
+        response_data = response.json()
+
+        actual_results = [
+            (result['first_name'], result['last_name'], result['dit_team']['name'])
+            for result in response_data['results']
+        ]
+        assert actual_results == expected_results
+
+        assert response_data['count'] == len(expected_results)

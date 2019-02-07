@@ -1,6 +1,10 @@
 """Company and related resources view sets."""
-from django.db.models import Prefetch
-from django_filters import FilterSet
+import re
+from functools import reduce
+from operator import or_
+
+from django.db.models import Case, IntegerField, Prefetch, Q, When
+from django_filters import CharFilter, FilterSet
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import mixins, viewsets
 from rest_framework.filters import OrderingFilter
@@ -144,13 +148,124 @@ class ContactAuditViewSet(AuditViewSet):
 class AdviserFilter(FilterSet):
     """Adviser filter."""
 
+    autocomplete_fields = (
+        'first_name',
+        'last_name',
+        'dit_team__name',
+    )
+    autocomplete = CharFilter(method='filter_autocomplete')
+
+    def filter_autocomplete(self, queryset, field_name, value):
+        """
+        Performs an autocomplete search for advisers.
+
+        The input string is split into tokens. Each token must match a prefix of a word in any of
+        the following fields (case-insensitive):
+
+        - first_name
+        - last_name
+        - dit_team.name
+
+        A word is defined as an unbroken sequence of letters, numbers and/or underscores.
+
+        Results are automatically ordered as follows:
+
+        - advisers with a match on first_name are returned first, last_name second and
+        dit_team.name last
+        - within each group, results are sorted by first_name, last_name, dit_team.name and
+        finally pk (so that the results are deterministic if the other ordering fields are
+        identical).
+
+        Scoring is not used is keep the order of results predictable when only a few characters
+        are entered.
+
+        Note that this ordering won't be used if an explicit sortby query parameter is provided
+        in the request.
+        """
+        escaped_tokens = [re.escape(token) for token in value.split()]
+
+        if not escaped_tokens:
+            return queryset
+
+        q_objects_for_filtering = (
+            self._filtering_q_for_token(self.autocomplete_fields, escaped_token)
+            for escaped_token in escaped_tokens
+        )
+        cases_for_ordering = (
+            When(self._ordering_q_for_field(field, escaped_tokens), then=index)
+            for index, field in enumerate(self.autocomplete_fields)
+        )
+        return queryset.annotate(
+            _autocomplete_ordering=Case(*cases_for_ordering, output_field=IntegerField()),
+        ).filter(
+            *q_objects_for_filtering,
+        ).order_by(
+            '_autocomplete_ordering',
+            *self.autocomplete_fields,
+            'pk',
+        )
+
+    @classmethod
+    def _ordering_q_for_field(cls, field, escaped_tokens):
+        return reduce(
+            or_,
+            (
+                Q(cls._q_for_field_and_token(field, escaped_token))
+                for escaped_token in escaped_tokens
+            ),
+        )
+
+    @classmethod
+    def _filtering_q_for_token(cls, fields, escaped_token):
+        return reduce(
+            or_,
+            (
+                Q(cls._q_for_field_and_token(field, escaped_token))
+                for field in fields
+            ),
+        )
+
+    @staticmethod
+    def _q_for_field_and_token(field, escaped_token):
+        r"""
+        Generates a Q object that performs a case-insensitive match of a token with prefixes
+        of any of the words in a field.
+
+        \m means a word boundary (a word is defined as a consecutive sequence of letters,
+        numbers and underscores).
+        """
+        q_kwargs = {
+            f'{field}__iregex': rf'\m{escaped_token}',
+        }
+        return Q(**q_kwargs)
+
     class Meta:
         model = Advisor
+        # TODO: Remove unused options following the deprecation period.
         fields = dict(
             first_name=['exact', 'icontains'],
             last_name=['exact', 'icontains'],
             email=['exact', 'icontains'],
         )
+
+
+class AdviserOrderingFilter(OrderingFilter):
+    """Filter back end for the adviser view."""
+
+    def get_default_ordering(self, view):
+        """
+        Gets the default ordering for the view.
+
+        If a value has been provided in the autocomplete query parameter, no default
+        ordering is used as the autocomplete filter orders results automatically.
+
+        Otherwise, the default ordering set on the view (in the ordering attribute)
+        is used.
+        """
+        if view.request.query_params.get('autocomplete'):
+            return None
+
+        return super().get_default_ordering(view)
 
 
 class AdviserReadOnlyViewSetV1(
@@ -165,8 +280,8 @@ class AdviserReadOnlyViewSetV1(
     )
     filter_backends = (
         DjangoFilterBackend,
-        OrderingFilter,
+        AdviserOrderingFilter,
     )
     filterset_class = AdviserFilter
-    ordering_fields = ('first_name', 'last_name')
-    ordering = ('first_name', 'last_name')
+    ordering_fields = ('first_name', 'last_name', 'dit_team__name')
+    ordering = ('first_name', 'last_name', 'dit_team__name')
