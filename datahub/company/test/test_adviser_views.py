@@ -188,6 +188,14 @@ class TestAdviser(APITestMixin):
                 ],
             ),
             (
+                # with extra spaces
+                'conner   new  york',
+                [
+                    ('Jo', "O'Conner", 'New York'),
+                    ('Mary', 'O’Conner', 'New York'),
+                ],
+            ),
+            (
                 # with typo
                 'connner new york',
                 [],
@@ -293,6 +301,12 @@ class TestAdviser(APITestMixin):
                 'Ni',
                 [
                     ('Nigel', 'Newman', 'New York'),
+                ],
+            ),
+            (
+                "O'Conner",
+                [
+                    ('Jo', "O'Conner", 'New York'),
                 ],
             ),
             (
