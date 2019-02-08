@@ -188,11 +188,11 @@ class AdviserFilter(FilterSet):
             return queryset
 
         q_objects_for_filtering = (
-            self._filtering_q_for_token(self.autocomplete_fields, escaped_token)
+            self._autocomplete_filtering_q(self.autocomplete_fields, escaped_token)
             for escaped_token in escaped_tokens
         )
         cases_for_ordering = (
-            When(self._ordering_q_for_field(field, escaped_tokens), then=index)
+            When(self._autocomplete_ordering_q(field, escaped_tokens), then=index)
             for index, field in enumerate(self.autocomplete_fields)
         )
         return queryset.annotate(
@@ -206,27 +206,27 @@ class AdviserFilter(FilterSet):
         )
 
     @classmethod
-    def _ordering_q_for_field(cls, field, escaped_tokens):
+    def _autocomplete_ordering_q(cls, field, escaped_tokens):
         return reduce(
             or_,
             (
-                Q(cls._q_for_field_and_token(field, escaped_token))
+                Q(cls._autocomplete_q(field, escaped_token))
                 for escaped_token in escaped_tokens
             ),
         )
 
     @classmethod
-    def _filtering_q_for_token(cls, fields, escaped_token):
+    def _autocomplete_filtering_q(cls, fields, escaped_token):
         return reduce(
             or_,
             (
-                Q(cls._q_for_field_and_token(field, escaped_token))
+                Q(cls._autocomplete_q(field, escaped_token))
                 for field in fields
             ),
         )
 
     @staticmethod
-    def _q_for_field_and_token(field, escaped_token):
+    def _autocomplete_q(field, escaped_token):
         r"""
         Generates a Q object that performs a case-insensitive match of a token with prefixes
         of any of the words in a field.
