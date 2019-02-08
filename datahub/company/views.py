@@ -4,8 +4,7 @@ from functools import reduce
 from operator import or_
 
 from django.db.models import Case, IntegerField, Prefetch, Q, When
-from django_filters import CharFilter, FilterSet
-from django_filters.rest_framework import DjangoFilterBackend
+from django_filters.rest_framework import CharFilter, DjangoFilterBackend, FilterSet
 from rest_framework import mixins, viewsets
 from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
@@ -242,11 +241,12 @@ class AdviserFilter(FilterSet):
     class Meta:
         model = Advisor
         # TODO: Remove unused options following the deprecation period.
-        fields = dict(
-            first_name=['exact', 'icontains'],
-            last_name=['exact', 'icontains'],
-            email=['exact', 'icontains'],
-        )
+        fields = {
+            'first_name': ('exact', 'icontains'),
+            'last_name': ('exact', 'icontains'),
+            'email': ('exact', 'icontains'),
+            'is_active': ('exact',),
+        }
 
 
 class AdviserOrderingFilter(OrderingFilter):
