@@ -8,6 +8,7 @@ def create_mock_search_app(
         write_index='test-index',
         bulk_batch_size=1000,
         queryset=None,
+        was_previously_initialised=True,
 ):
     """Creates a mock search app."""
     mock = Mock()
@@ -18,6 +19,7 @@ def create_mock_search_app(
             target_mapping_hash,
             read_indices,
             write_index,
+            was_previously_initialised,
         ),
         bulk_batch_size=bulk_batch_size,
         queryset=queryset,
@@ -39,6 +41,7 @@ def _create_mock_es_model(
         target_mapping_hash,
         read_indices,
         write_index,
+        was_previously_initialised,
 ):
     def db_objects_to_es_documents(db_objects, index=None):
         for obj in db_objects:
@@ -61,4 +64,5 @@ def _create_mock_es_model(
         get_read_alias=Mock(return_value='test-read-alias'),
         get_write_alias=Mock(return_value='test-write-alias'),
         get_target_index_name=Mock(return_value=f'test-index-{target_mapping_hash}'),
+        set_up_index_and_aliases=Mock(return_value=not was_previously_initialised),
     )

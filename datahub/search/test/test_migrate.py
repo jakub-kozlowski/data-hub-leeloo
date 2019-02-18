@@ -17,6 +17,49 @@ def test_migrate_apps(monkeypatch):
     assert {args[0][0] for args in migrate_app_mock.call_args_list} == apps
 
 
+def test_migrate_app_with_uninitialised_app(monkeypatch, mock_es_client):
+    """Test that migrate_app() ...."""
+    sync_model_task_mock = Mock()
+    monkeypatch.setattr('datahub.search.migrate.sync_model', sync_model_task_mock)
+    create_index_mock = Mock()
+    monkeypatch.setattr('datahub.search.models.create_index', create_index_mock)
+
+    mock_client = mock_es_client.return_value
+    new_index = 'test-index-target-hash'
+    target_hash = 'target-hash'
+    mock_app = create_mock_search_app(
+        target_mapping_hash=target_hash,
+        was_previously_initialised=False,
+    )
+
+    migrate_app(mock_app)
+
+    create_index_mock.assert_called_once_with(new_index, mock_app.es_model._doc_type.mapping)
+
+    mock_client.indices.update_aliases.assert_called_once_with(
+        body={
+            'actions': [
+                {
+                    'add': {
+                        'alias': 'test-read-alias',
+                        'indices': [new_index],
+                    },
+                },
+                {
+                    'add': {
+                        'alias': 'test-write-alias',
+                        'indices': [new_index],
+                    },
+                },
+            ],
+        },
+    )
+
+    sync_model_task_mock.apply_async.assert_called_once_with(
+        args=(mock_app.name,),
+    )
+
+
 def test_migrate_app_with_app_needing_migration(monkeypatch, mock_es_client):
     """Test that migrate_app() migrates an app needing migration."""
     migrate_model_task_mock = Mock()

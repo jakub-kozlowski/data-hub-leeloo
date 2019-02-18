@@ -33,11 +33,6 @@ class SearchApp:
     export_permission = None
 
     @classmethod
-    def init_es(cls):
-        """Creates the index and aliases for this app if they don't already exist."""
-        cls.es_model.set_up_index_and_aliases()
-
-    @classmethod
     def get_signal_receivers(cls):
         """Returns the signal receivers for this search app."""
         package, _, _ = cls.__module__.rpartition('.')

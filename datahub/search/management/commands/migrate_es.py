@@ -1,9 +1,9 @@
 from logging import getLogger
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
 from django_pglocks import advisory_lock
 
-from datahub.search.apps import are_apps_initialised, get_search_apps, get_search_apps_by_name
+from datahub.search.apps import get_search_apps, get_search_apps_by_name
 from datahub.search.migrate import migrate_apps
 
 logger = getLogger(__name__)
@@ -38,11 +38,6 @@ See docs/Elasticsearch migrations.md for further details."""
     def handle(self, *args, **options):
         """Executes the command."""
         apps = get_search_apps_by_name(options['model'])
-
-        if not are_apps_initialised(apps):
-            raise CommandError(
-                f'Index and mapping not initialised, please run `init_es` first.',
-            )
 
         with advisory_lock('leeloo_migrate_es'):
             migrate_apps(apps)
