@@ -131,19 +131,19 @@ class TestReplaceNullWithDefault:
                 'non_nullable_with_default is not nullable',
             ),
             (
-                'nullable_without_default',
-                str,
-                'callable defaults for nullable_without_default are not supported',
+                'non_nullable_with_default',
+                True,
+                'non_nullable_with_default is not nullable',
             ),
         ),
     )
     def test_raises_error_on_invalid_field(self, monkeypatch, field, default, expected_error_msg):
         """
         Test that an error is raised if:
-         - a model field without a default is defined
-         - a model field with a callable default is defined
-         - a model field with a callable default is explicitly specified
-         - a non-nullable model field is defined
+         - a model field without a default is specified
+         - a model field with a callable default is specified
+         - a non-nullable field is specified
+         - a non-nullable field is specified and an explicit default is passed
         """
         res = replace_null_with_default.apply_async(
             args=('support.NullableWithDefaultModel', field),
