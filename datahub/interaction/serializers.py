@@ -1,14 +1,18 @@
+from collections import Counter
 from operator import not_
 
 from django.db.transaction import atomic
 from django.utils.translation import ugettext_lazy
 from rest_framework import serializers
+from rest_framework.settings import api_settings
 
-from datahub.company.models import Company, Contact
+from datahub.company.models import Advisor, Company, Contact
 from datahub.company.serializers import NestedAdviserField
 from datahub.core.serializers import NestedRelatedField
 from datahub.core.validate_utils import is_blank, is_not_blank
 from datahub.core.validators import (
+    AllIsBlankRule,
+    AndRule,
     EqualsRule,
     OperatorRule,
     RulesBasedValidator,
@@ -29,19 +33,111 @@ from datahub.investment.project.serializers import NestedInvestmentProjectField
 from datahub.metadata.models import Service, Team
 
 
+class _LegacyParticipantField(NestedRelatedField):
+    """
+    Serialiser field used for the legacy dit_adviser and dit_team fields.
+
+    This is used for temporary backwards compatibility while these fields are being replaced by
+    the InteractionDITParticipant model.
+
+    TODO Remove this once dit_adviser and dit_team have been removed from interactions.
+    """
+
+    def __init__(self, model, participant_field, **kwargs):
+        """
+        Initialises the field with a model and name of the InteractionDITParticipant field to
+        use as the source.
+        """
+        self.participant_field = participant_field
+        super().__init__(model, source='*', **kwargs)
+
+    def to_internal_value(self, data):
+        """Maps the provided value back to the field's name (as this field uses source='*')."""
+        return {
+            self.field_name: super().to_internal_value(data),
+        }
+
+    def to_representation(self, value):
+        """Converts a the first item of a InteractionDITParticipant query set to a dictionary."""
+        first_participant = value.dit_participants.first()
+        if not first_participant:
+            return None
+
+        source_field_value = getattr(first_participant, self.participant_field)
+        return super().to_representation(source_field_value)
+
+
+class InteractionDITParticipantListSerializer(serializers.ListSerializer):
+    """Interaction DIT participant list serialiser that adds validation for duplicates."""
+
+    default_error_messages = {
+        'duplicate_adviser': ugettext_lazy(
+            'You cannot add the same adviser more than once.',
+        ),
+    }
+
+    def bind(self, field_name, parent):
+        """
+        Overridden to set self.partial to False as otherwise allow_empty=False does not behave
+        correctly.
+
+        See https://github.com/encode/django-rest-framework/issues/6509.
+        """
+        super().bind(field_name, parent)
+        self.partial = False
+
+    def run_validation(self, data=serializers.empty):
+        """
+        Validates that there are no duplicate advisers.
+
+        Unfortunately, overriding validate() results in a error dict being returned and the errors
+        being placed in non_field_errors. Hence, run_validation() is overridden instead (to get
+        the expected behaviour of an error list being returned, with each entry corresponding
+        to each item in the request body).
+        """
+        value = super().run_validation(data)
+        counts = Counter(dit_participant['adviser'] for dit_participant in value)
+
+        if len(counts) == len(value):
+            return value
+
+        errors = []
+        for item in value:
+            item_errors = {}
+
+            if counts[item['adviser']] > 1:
+                item_errors['adviser'] = [self.error_messages['duplicate_adviser']]
+
+            errors.append(item_errors)
+
+        raise serializers.ValidationError(errors)
+
+
 class InteractionDITParticipantSerializer(serializers.ModelSerializer):
     """
     Interaction DIT participant serialiser.
 
-    Used within InteractionSerializer.
+    Used as a field in InteractionSerializer.
     """
 
     adviser = NestedAdviserField()
-    team = NestedRelatedField(Team)
+    # team is read-only as it is set from the adviser when a participant is added to
+    # an interaction
+    team = NestedRelatedField(Team, read_only=True)
+
+    @classmethod
+    def many_init(cls, *args, **kwargs):
+        """Initialises a many=True instance of the serialiser with a customer list serialiser."""
+        child = cls(context=kwargs.get('context'))
+        return InteractionDITParticipantListSerializer(child=child, *args, **kwargs)
 
     class Meta:
         model = InteractionDITParticipant
         fields = ('adviser', 'team')
+        # Explicitly set validator to doubly ensure that a unique together validator is not added.
+        # (UniqueTogetherValidator would not function correctly when multiple items are being
+        # updated at once.)
+        validators = []
 
 
 class InteractionSerializer(serializers.ModelSerializer):
@@ -69,6 +165,9 @@ class InteractionSerializer(serializers.ModelSerializer):
         'too_many_contacts_for_event_service_delivery': ugettext_lazy(
             'Only one contact can be provided for event service deliveries.',
         ),
+        'one_participant_field': ugettext_lazy(
+            'If dit_participants is provided, dit_adviser and dit_team must be omitted.',
+        ),
     }
 
     company = NestedRelatedField(Company)
@@ -84,9 +183,23 @@ class InteractionSerializer(serializers.ModelSerializer):
         ),
     )
     created_by = NestedAdviserField(read_only=True)
-    dit_adviser = NestedAdviserField()
-    dit_participants = InteractionDITParticipantSerializer(many=True, read_only=True)
-    dit_team = NestedRelatedField(Team)
+    # dit_adviser has been replaced by dit_participants
+    # TODO: Remove following deprecation period
+    dit_adviser = _LegacyParticipantField(
+        Advisor,
+        'adviser',
+        extra_fields=('first_name', 'last_name', 'name'),
+        required=False,
+    )
+    # TODO: Remove required=False once dit_adviser and dit_team have been removed
+    dit_participants = InteractionDITParticipantSerializer(
+        many=True,
+        allow_empty=False,
+        required=False,
+    )
+    # dit_team has been replaced by dit_participants
+    # TODO: Remove following deprecation period (has been replaced by dit_participants)
+    dit_team = _LegacyParticipantField(Team, 'team', required=False)
     communication_channel = NestedRelatedField(
         CommunicationChannel, required=False, allow_null=True,
     )
@@ -106,6 +219,25 @@ class InteractionSerializer(serializers.ModelSerializer):
         required=False,
     )
 
+    def to_internal_value(self, data):
+        """
+        Check that dit_participants and (dit_adviser or dit_team) haven't both been provided.
+
+        TODO: Remove once dit_adviser and dit_team have been removed from the API.
+        """
+        has_dit_adviser_or_dit_team = {'dit_adviser', 'dit_team'} & data.keys()
+        has_dit_participants = 'dit_participants' in data
+
+        if has_dit_adviser_or_dit_team and has_dit_participants:
+            error = {
+                api_settings.NON_FIELD_ERRORS_KEY: [
+                    self.error_messages['one_participant_field'],
+                ],
+            }
+            raise serializers.ValidationError(error, code='one_participant_field')
+
+        return super().to_internal_value(data)
+
     def validate(self, data):
         """
         Removes the semi-virtual field is_event from the data.
@@ -123,6 +255,15 @@ class InteractionSerializer(serializers.ModelSerializer):
             contacts = data['contacts']
             data['contact'] = contacts[0] if contacts else None
 
+        # If dit_participants has been provided, this copies the first participant to
+        # dit_adviser and dit_team (for backwards compatibility with anything consuming the
+        # database).
+        # TODO Remove once dit_adviser and dit_team removed from the database.
+        if 'dit_participants' in data:
+            first_participant = data['dit_participants'][0]
+            data['dit_adviser'] = first_participant['adviser']
+            data['dit_team'] = first_participant['adviser'].dit_team
+
         return data
 
     @atomic
@@ -130,45 +271,83 @@ class InteractionSerializer(serializers.ModelSerializer):
         """
         Create an interaction.
 
-        Overridden so that dit_adviser and dit_team can be copied to dit_participants.
-
-        TODO: Remove once dit_adviser and dit_team have been fully replaced by dit_participants.
+        Overridden to handle updating of dit_participants.
         """
-        interaction = super().create(validated_data)
-
-        # These fields are required, so we can assume they are present
-        dit_adviser = validated_data['dit_adviser']
-        dit_team = validated_data['dit_team']
-
-        dit_participant = InteractionDITParticipant(
-            interaction=interaction,
-            adviser=dit_adviser,
-            team=dit_team,
-        )
-        dit_participant.save()
-
-        return interaction
+        return self._create_or_update(validated_data)
 
     @atomic
     def update(self, instance, validated_data):
         """
         Create an interaction.
 
-        Overridden so that dit_adviser and dit_team can be copied to dit_participants.
-
-        TODO: Remove once dit_adviser and dit_team have been fully replaced by dit_participants.
+        Overridden to handle updating of dit_participants.
         """
-        interaction = super().update(instance, validated_data)
+        return self._create_or_update(validated_data, instance=instance, is_update=True)
 
-        InteractionDITParticipant.objects.update_or_create(
-            interaction=interaction,
-            defaults={
-                'adviser': interaction.dit_adviser,
-                'team': interaction.dit_team,
-            },
-        )
+    def _create_or_update(self, validated_data, instance=None, is_update=False):
+        dit_participants = validated_data.pop('dit_participants', None)
+
+        if is_update:
+            interaction = super().update(instance, validated_data)
+        else:
+            interaction = super().create(validated_data)
+
+        # This if-block creates a DIT participant from the legacy dit_adviser and dit_team
+        # fields if dit_participants has not been provided.
+        # TODO: Remove the first part of this if-block once dit_adviser and dit_team have been
+        #  removed from the API.
+        if dit_participants is None:
+            InteractionDITParticipant.objects.update_or_create(
+                interaction=interaction,
+                adviser=interaction.dit_adviser,
+                defaults={
+                    'team': interaction.dit_team,
+                },
+            )
+
+            InteractionDITParticipant.objects.filter(
+                interaction=interaction,
+            ).exclude(
+                adviser=interaction.dit_adviser,
+            ).delete()
+        else:
+            self._save_dit_participants(interaction, dit_participants)
 
         return interaction
+
+    def _save_dit_participants(self, interaction, validated_dit_participants):
+        """
+        Updates the DIT participants for an interaction.
+
+        This compares the provided list of participants with the current list, and adds and
+        removes participants as necessary.
+
+        This is based on example code in DRF documentation for ListSerializer.
+
+        Note that adviser's team is also saved in the participant when a participant is added
+        to an interaction, so that if the adviser later moves team, the interaction is still
+        recorded against the original team.
+        """
+        old_adviser_mapping = {
+            dit_participant.adviser: dit_participant
+            for dit_participant in interaction.dit_participants.all()
+        }
+        old_advisers = old_adviser_mapping.keys()
+        new_advisers = {
+            dit_participant['adviser'] for dit_participant in validated_dit_participants
+        }
+
+        # Create new DIT participants
+        for adviser in new_advisers - old_advisers:
+            InteractionDITParticipant(
+                adviser=adviser,
+                interaction=interaction,
+                team=adviser.dit_team,
+            ).save()
+
+        # Delete removed DIT participants
+        for adviser in old_advisers - new_advisers:
+            old_adviser_mapping[adviser].delete()
 
     class Meta:
         model = Interaction
@@ -217,6 +396,35 @@ class InteractionSerializer(serializers.ModelSerializer):
             HasAssociatedInvestmentProjectValidator(),
             ContactsBelongToCompanyValidator(),
             RulesBasedValidator(
+                # If dit_adviser and dit_team are *omitted* (note that they already have
+                # allow_null=False) we assume that dit_participants is being used, and return an
+                # error if it is empty.
+                # TODO: Remove once dit_adviser and dit_team have been removed.
+                ValidationRule(
+                    'required',
+                    OperatorRule('dit_participants', bool),
+                    when=AllIsBlankRule('dit_adviser', 'dit_team'),
+                ),
+                # If dit_adviser has been provided, double-check that dit_team is also set.
+                # TODO: Remove once dit_adviser and dit_team have been removed.
+                ValidationRule(
+                    'required',
+                    OperatorRule('dit_adviser', bool),
+                    when=AndRule(
+                        OperatorRule('dit_team', bool),
+                        OperatorRule('dit_participants', not_),
+                    ),
+                ),
+                # If dit_team has been provided, double-check that dit_adviser is also set.
+                # TODO: Remove once dit_adviser and dit_team have been removed.
+                ValidationRule(
+                    'required',
+                    OperatorRule('dit_team', bool),
+                    when=AndRule(
+                        OperatorRule('dit_adviser', bool),
+                        OperatorRule('dit_participants', not_),
+                    ),
+                ),
                 ValidationRule(
                     'required',
                     OperatorRule('communication_channel', bool),
