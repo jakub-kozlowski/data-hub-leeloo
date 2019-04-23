@@ -228,6 +228,9 @@ class CompanyAutocompleteSearchListAPIViewV3(
         'registered_address_country',
         'registered_address_postcode',
     ]
+    context_fields = [
+        'country',
+    ]
 
 
 @register_v4_view(sub_path='autocomplete')
@@ -243,4 +246,7 @@ class CompanyAutocompleteSearchListAPIViewV4(
         'trading_names',
         'address',
         'registered_address',
+    ]
+    context_fields = [
+        'country',
     ]

@@ -3,6 +3,7 @@ from collections import Counter
 import pytest
 
 from datahub.company.test.factories import CompanyFactory
+from datahub.core.constants import Country as CountryConstant
 from datahub.search.company.models import Company as ESCompany, get_suggestions
 
 pytestmark = pytest.mark.django_db
@@ -77,7 +78,7 @@ class TestCompanyElasticModel:
         assert len(list(result)) == len(companies)
 
     @pytest.mark.parametrize(
-        'name,trading_names,archived,expected_suggestions',
+        'name,trading_names,archived,expected_input_suggestions,expected_contexts',
         (
             (
                 'Hello Hello uk',
@@ -87,20 +88,22 @@ class TestCompanyElasticModel:
                     'Good', 'uk', 'Hello Hello uk',
                     'us', 'Good Hello us', 'fr', 'Hello',
                 ],
+                {'country': [CountryConstant.united_kingdom.value.id]},
             ),
             (
                 'Hello      gb',
                 [],
                 False,
                 ['Hello', 'gb', 'Hello      gb'],
+                {'country': [CountryConstant.united_kingdom.value.id]},
             ),
             (
                 'Hello      gb',
                 [],
                 True,
                 [],
+                [],
             ),
-
         ),
     )
     def test_company_get_suggestions(
@@ -108,7 +111,8 @@ class TestCompanyElasticModel:
         name,
         trading_names,
         archived,
-        expected_suggestions,
+        expected_input_suggestions,
+        expected_contexts,
     ):
         """Test get an autocomplete search suggestions for a company"""
         db_company = CompanyFactory(
@@ -118,5 +122,8 @@ class TestCompanyElasticModel:
         )
 
         result = get_suggestions(db_company)
-
-        assert Counter(result) == Counter(expected_suggestions)
+        if result:
+            assert Counter(result['input']) == Counter(expected_input_suggestions)
+            assert Counter(result['contexts']) == Counter(expected_contexts)
+        else:
+            assert Counter(result) == Counter(expected_input_suggestions)

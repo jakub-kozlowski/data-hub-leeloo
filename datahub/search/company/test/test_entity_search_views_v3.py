@@ -629,14 +629,26 @@ class TestAutocompleteSearch(APITestMixin):
 
     def test_response_body(self, setup_es):
         """Tests the response body of autocomplete search query."""
+        # UK Company to be ignored
+        CompanyFactory(
+            name='abc 2',
+            trading_names=['Xyz trading 2', 'Abc trading 2'],
+            registered_address_country_id=Country.united_kingdom.value.id,
+        )
+
         company = CompanyFactory(
             name='abc',
             trading_names=['Xyz trading', 'Abc trading'],
+            registered_address_country_id=Country.canada.value.id,
+            trading_address_country_id=Country.united_kingdom.value.id,
         )
         setup_es.indices.refresh()
 
         url = reverse('api-v3:search:company-autocomplete')
-        response = self.api_client.get(url, data={'term': 'abc'})
+        response = self.api_client.get(
+            url,
+            data={'term': 'abc', 'country': Country.canada.value.id},
+        )
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == {
@@ -660,8 +672,8 @@ class TestAutocompleteSearch(APITestMixin):
                     'registered_address_county': company.registered_address_county,
                     'registered_address_postcode': company.registered_address_postcode,
                     'registered_address_country': {
-                        'id': str(Country.united_kingdom.value.id),
-                        'name': Country.united_kingdom.value.name,
+                        'id': str(Country.canada.value.id),
+                        'name': Country.canada.value.name,
                     },
                     'trading_names': ['Xyz trading', 'Abc trading'],
                 },

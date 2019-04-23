@@ -112,7 +112,7 @@ def get_search_by_entity_query(
     )
 
 
-def build_autocomplete_query(es_model, keyword_search, limit, fields_to_include):
+def build_autocomplete_query(es_model, keyword_search, limit, fields_to_include, context):
     """Builds the query for autocomplete search and applies source filtering."""
     index = es_model.get_read_alias()
     autocomplete_search = es_model.search(index=index)
@@ -123,7 +123,11 @@ def build_autocomplete_query(es_model, keyword_search, limit, fields_to_include)
     return autocomplete_search.suggest(
         'autocomplete',
         keyword_search,
-        completion={'field': 'suggest', 'size': limit},
+        completion={
+            'field': 'suggest',
+            'size': limit,
+            **context,
+        },
     )
 
 
