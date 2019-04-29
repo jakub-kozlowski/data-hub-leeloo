@@ -485,7 +485,7 @@ class TestInteractionCSVRowForm:
             'service': '',
         }
 
-        form = InteractionCSVRowForm(data=data)
+        form = InteractionCSVRowForm(data=data, row_index=5)
         form.is_valid()
         expected_errors = [
             CSVRowError(
@@ -519,7 +519,7 @@ class TestInteractionCSVRowForm:
                 'This field is required.',
             ),
         ]
-        assert Counter(form.get_flat_error_list_iterator(5)) == Counter(expected_errors)
+        assert Counter(form.get_flat_error_list_iterator()) == Counter(expected_errors)
 
 
 def _random_communication_channel(disabled=False):

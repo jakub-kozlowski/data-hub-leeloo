@@ -26,7 +26,7 @@ class InteractionCSVForm(BaseCSVImportForm):
     def are_all_rows_valid(self):
         """Check if all of the rows in the CSV pass validation."""
         with self.open_file_as_dict_reader() as dict_reader:
-            return all(InteractionCSVRowForm(row).is_valid() for row in dict_reader)
+            return all(InteractionCSVRowForm(data=row).is_valid() for row in dict_reader)
 
     def get_row_error_iterator(self):
         """Get a generator of CSVRowError instances."""
@@ -34,7 +34,7 @@ class InteractionCSVForm(BaseCSVImportForm):
             yield from (
                 error
                 for index, row in enumerate(dict_reader)
-                for error in InteractionCSVRowForm(row).get_flat_error_list_iterator(index)
+                for error in _get_errors_for_row(index, row)
             )
 
     def save_file_to_cache(self):
@@ -65,6 +65,10 @@ class InteractionCSVForm(BaseCSVImportForm):
                 'csv_file': SimpleUploadedFile(f'{token}.csv', data),
             },
         )
+
+
+def _get_errors_for_row(index, data):
+    return InteractionCSVRowForm(row_index=index, data=data).get_flat_error_list_iterator()
 
 
 def _make_token():
