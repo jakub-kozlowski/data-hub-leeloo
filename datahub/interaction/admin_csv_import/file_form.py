@@ -31,11 +31,9 @@ class InteractionCSVForm(BaseCSVImportForm):
     def get_row_error_iterator(self):
         """Get a generator of CSVRowError instances."""
         with self.open_file_as_dict_reader() as dict_reader:
-            yield from (
-                error
-                for index, row in enumerate(dict_reader)
-                for error in _get_errors_for_row(index, row)
-            )
+            for index, row in enumerate(dict_reader):
+                form = InteractionCSVRowForm(row_index=index, data=row)
+                yield from form.get_flat_error_list_iterator()
 
     def save_file_to_cache(self):
         """Generate a token and stores the file in the configured cache with a timeout."""
@@ -65,10 +63,6 @@ class InteractionCSVForm(BaseCSVImportForm):
                 'csv_file': SimpleUploadedFile(f'{token}.csv', data),
             },
         )
-
-
-def _get_errors_for_row(index, data):
-    return InteractionCSVRowForm(row_index=index, data=data).get_flat_error_list_iterator()
 
 
 def _make_token():
