@@ -4,7 +4,6 @@ import pytest
 from django.conf import settings
 from django.contrib import messages as django_messages
 from django.contrib.admin.templatetags.admin_urls import admin_urlname
-from django.core.cache import cache
 from django.test import Client
 from django.urls import reverse
 from rest_framework import status
@@ -12,13 +11,7 @@ from rest_framework import status
 from datahub.company.test.factories import AdviserFactory
 from datahub.core.test_utils import AdminTestMixin, create_test_user
 from datahub.feature_flag.test.factories import FeatureFlagFactory
-from datahub.interaction.admin_csv_import import file_form
-from datahub.interaction.admin_csv_import.file_form import _cache_key_for_token
-from datahub.interaction.admin_csv_import.views import (
-    FILE_FAILED_REVALIDATION_MESSAGE,
-    INTERACTION_IMPORTER_FEATURE_FLAG_NAME,
-    INVALID_TOKEN_MESSAGE,
-)
+from datahub.interaction.admin_csv_import.views import INTERACTION_IMPORTER_FEATURE_FLAG_NAME
 from datahub.interaction.models import Interaction, InteractionPermission
 
 
@@ -28,7 +21,6 @@ def interaction_importer_feature_flag():
     yield FeatureFlagFactory(code=INTERACTION_IMPORTER_FEATURE_FLAG_NAME)
 
 
-import_errors_urlname = admin_urlname(Interaction._meta, 'import-errors')
 import_interactions_url = reverse(
     admin_urlname(Interaction._meta, 'import'),
 )
@@ -79,18 +71,7 @@ class TestInteractionAdminChangeList(AdminTestMixin):
 
 
 @pytest.mark.usefixtures('interaction_importer_feature_flag')
-@pytest.mark.parametrize(
-    'url',
-    (
-        import_interactions_url,
-        reverse(
-            import_errors_urlname,
-            kwargs={
-                'token': 'non-existent-token',
-            },
-        ),
-    ),
-)
+@pytest.mark.parametrize('url', (import_interactions_url,))
 class TestAccessRestrictions(AdminTestMixin):
     """Tests permissions and other access restrictions on import interaction-related views."""
 
@@ -135,15 +116,6 @@ class TestAccessRestrictions(AdminTestMixin):
     (
         ('get', import_interactions_url),
         ('post', import_interactions_url),
-        (
-            'get',
-            reverse(
-                import_errors_urlname,
-                kwargs={
-                    'token': 'non-existent-token',
-                },
-            ),
-        ),
     ),
 )
 class Test404IfFeatureFlagDisabled(AdminTestMixin):
@@ -248,46 +220,6 @@ interaction,01/01/2018,{adviser.name},person@company.com,Account Management
         assert len(response.redirect_chain) == 1
         assert response.redirect_chain[0][0] == interaction_change_list_url
 
-    def test_redirects_to_error_page_if_invalid_rows(self, track_return_values):
-        """
-        Test that if some rows have validation errors, the user is redirected to the errors page.
-        """
-        tracker = track_return_values(file_form, '_make_token')
-
-        file_contents = f"""kind,date,adviser_1,contact_email,service\r
-invalid,invalid,invalid,invalid,invalid
-""".encode(encoding='utf-8')
-        file = io.BytesIO(file_contents)
-        file.name = 'test.csv'
-
-        response = self.client.post(
-            import_interactions_url,
-            follow=True,
-            data={
-                'csv_file': file,
-            },
-        )
-
-        assert len(tracker.return_values) == 1
-        token = tracker.return_values[0]
-
-        assert response.status_code == status.HTTP_200_OK
-        assert len(response.redirect_chain) == 1
-
-        expected_url = reverse(
-            import_errors_urlname,
-            kwargs={
-                'token': token,
-            },
-        )
-        assert response.redirect_chain[0][0] == expected_url
-        assert cache.get(_cache_key_for_token(token)) == file_contents
-
-
-@pytest.mark.usefixtures('interaction_importer_feature_flag', 'local_memory_cache')
-class TestImportInteractionsErrorsView(AdminTestMixin):
-    """Tests for the import interaction row errors page."""
-
     @pytest.mark.parametrize(
         'max_errors,should_be_truncated',
         (
@@ -295,8 +227,13 @@ class TestImportInteractionsErrorsView(AdminTestMixin):
             (10, False),
         ),
     )
-    def test_displays_errors_from_cached_file(self, max_errors, should_be_truncated, monkeypatch):
-        """Test that errors are displayed for a file retrieved from the cache."""
+    def test_displays_errors_for_file_with_invalid_rows(
+        self,
+        max_errors,
+        should_be_truncated,
+        monkeypatch,
+    ):
+        """Test that errors are displayed for a file with invalid rows."""
         monkeypatch.setattr(
             'datahub.interaction.admin_csv_import.views.MAX_ERRORS_TO_DISPLAY',
             max_errors,
@@ -307,68 +244,16 @@ class TestImportInteractionsErrorsView(AdminTestMixin):
 invalid,invalid,invalid,invalid,invalid\r
 invalid,invalid,invalid,invalid,invalid
 """.encode(encoding='utf-8')
-        token = 'test-token'
+        file = io.BytesIO(file_contents)
+        file.name = 'test.csv'
 
-        cache.set(_cache_key_for_token(token), file_contents)
-
-        url = reverse(
-            import_errors_urlname,
-            kwargs={
-                'token': token,
+        response = self.client.post(
+            import_interactions_url,
+            data={
+                'csv_file': file,
             },
         )
 
-        response = self.client.get(url)
-
+        assert response.status_code == status.HTTP_200_OK
         assert len(response.context['errors']) == min(10, max_errors)
         assert response.context['are_errors_truncated'] == should_be_truncated
-
-    def test_redirects_on_invalid_token(self):
-        """
-        Test that if a invalid token is provided, the user is redirected to the select file
-        page with an error message.
-        """
-        url = reverse(
-            import_errors_urlname,
-            kwargs={
-                'token': 'invalid-token',
-            },
-        )
-
-        response = self.client.get(url, follow=True)
-
-        assert response.status_code == status.HTTP_200_OK
-        assert len(response.redirect_chain) == 1
-        assert response.redirect_chain[0][0] == import_interactions_url
-        messages = list(response.context['messages'])
-        assert len(messages) == 1
-        assert messages[0].level == django_messages.ERROR
-        assert messages[0].message == INVALID_TOKEN_MESSAGE
-
-    def test_displays_errors_if_cached_file_is_invalid(self):
-        """
-        Test that if a file retrieved from the cache is invalid, the user is redirected to the
-        select file page with an error message.
-
-        (This should not normally happen.)
-        """
-        file_contents = b'invalid'
-        token = 'test-token'
-        cache.set(_cache_key_for_token(token), file_contents)
-
-        url = reverse(
-            import_errors_urlname,
-            kwargs={
-                'token': token,
-            },
-        )
-
-        response = self.client.get(url, follow=True)
-
-        assert response.status_code == status.HTTP_200_OK
-        assert len(response.redirect_chain) == 1
-        assert response.redirect_chain[0][0] == import_interactions_url
-        messages = list(response.context['messages'])
-        assert len(messages) == 1
-        assert messages[0].level == django_messages.ERROR
-        assert messages[0].message == FILE_FAILED_REVALIDATION_MESSAGE

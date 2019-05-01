@@ -2,7 +2,6 @@ from itertools import islice
 from logging import getLogger
 
 from django.conf import settings
-from django.contrib import messages as django_messages
 from django.contrib.admin.templatetags.admin_urls import admin_urlname
 from django.contrib.auth.decorators import permission_required
 from django.http import HttpResponseRedirect
@@ -58,11 +57,6 @@ class InteractionCSVImportAdmin:
                 admin_site.admin_view(self.select_file),
                 name=f'{model_meta.app_label}_{model_meta.model_name}_import',
             ),
-            path(
-                'import/<token>/errors',
-                admin_site.admin_view(self.show_row_errors),
-                name=f'{model_meta.app_label}_{model_meta.model_name}_import-errors',
-            ),
         ]
 
     @feature_flagged_view(INTERACTION_IMPORTER_FEATURE_FLAG_NAME)
@@ -77,37 +71,11 @@ class InteractionCSVImportAdmin:
         if not form.is_valid():
             return self._select_file_form_response(request, form)
 
-        token = form.save_file_to_cache()
         if not form.are_all_rows_valid():
-            return _redirect_response('import-errors', token=token)
+            return self._error_list_response(request, form.get_row_error_iterator())
 
         # Next page not yet implemented; redirect to the change list for now
         return _redirect_response('changelist')
-
-    @feature_flagged_view(INTERACTION_IMPORTER_FEATURE_FLAG_NAME)
-    @interaction_change_all_permission_required
-    def show_row_errors(self, request, token=None, *args, **kwargs):
-        """View displaying row errors."""
-        form = InteractionCSVForm.from_token(token)
-
-        if not form:
-            self.model_admin.message_user(request, INVALID_TOKEN_MESSAGE, django_messages.ERROR)
-            return _redirect_response('import')
-
-        if not form.is_valid():
-            logger.exception(
-                'A previously validated CSV file failed revalidation. Errors:\n'
-                f'{form.errors}',
-            )
-
-            self.model_admin.message_user(
-                request,
-                FILE_FAILED_REVALIDATION_MESSAGE,
-                django_messages.ERROR,
-            )
-            return _redirect_response('import')
-
-        return self._error_list_response(request, form.get_row_error_iterator())
 
     def _select_file_form_response(self, request, form):
         return self._template_response(

@@ -1,16 +1,10 @@
-from datetime import timedelta
-from secrets import token_urlsafe
-
 from django.conf import settings
-from django.core.cache import cache
-from django.core.files.uploadedfile import SimpleUploadedFile
 from django.template.defaultfilters import filesizeformat
 
 from datahub.core.admin_csv_import import BaseCSVImportForm
 from datahub.interaction.admin_csv_import.row_form import InteractionCSVRowForm
 
 
-INTERACTION_FILE_CACHE_TIMEOUT_SECS = int(timedelta(minutes=15).total_seconds())
 INTERACTION_FILE_CACHE_KEY_LENGTH = 32
 
 
@@ -34,40 +28,3 @@ class InteractionCSVForm(BaseCSVImportForm):
             for index, row in enumerate(dict_reader):
                 form = InteractionCSVRowForm(row_index=index, data=row)
                 yield from form.get_flat_error_list_iterator()
-
-    def save_file_to_cache(self):
-        """Generate a token and stores the file in the configured cache with a timeout."""
-        csv_file = self.cleaned_data['csv_file']
-        csv_file.seek(0)
-        data = csv_file.read()
-
-        token = _make_token()
-        cache_key = _cache_key_for_token(token)
-        cache.set(cache_key, data, timeout=INTERACTION_FILE_CACHE_TIMEOUT_SECS)
-        return token
-
-    @classmethod
-    def from_token(cls, token):
-        """
-        Create a InteractionCSVForm instance using a token.
-
-        Returns None if the token can't be found in the cache.
-        """
-        cache_key = _cache_key_for_token(token)
-        data = cache.get(cache_key)
-        if not data:
-            return None
-
-        return InteractionCSVForm(
-            files={
-                'csv_file': SimpleUploadedFile(f'{token}.csv', data),
-            },
-        )
-
-
-def _make_token():
-    return token_urlsafe(INTERACTION_FILE_CACHE_KEY_LENGTH)
-
-
-def _cache_key_for_token(token):
-    return f'interaction-csv-import:{token}'
