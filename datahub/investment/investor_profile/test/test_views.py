@@ -589,3 +589,34 @@ class TestUpdateLargeCapitalProfileConditionalFields(APITestMixin):
         assert response_data == {
             'required_checks_conducted': ['Enter a value for required checks conducted'],
         }
+
+    def test_patch_large_capital_required_checks_conducted_by_error_update(self):
+        """
+        Test updating required checks conducted by cannot be set when required checks
+        conducted is blank.
+        """
+        investor_company = CompanyFactory()
+        investor_profile = LargeInvestorProfileFactory(
+            investor_company=investor_company,
+            required_checks_conducted_id=RequiredChecksConductedConstant.cleared.value.id,
+            required_checks_conducted_on=date.today(),
+            required_checks_conducted_by=AdviserFactory(),
+        )
+        request_data = {
+            'required_checks_conducted': {
+                'id': RequiredChecksConductedConstant.issues_identified.value.id,
+            },
+        }
+
+        url = reverse('api-v4:large-investor-profile:item', kwargs={'pk': investor_profile.pk})
+        response = self.api_client.patch(url, data=request_data)
+        response_data = response.json()
+        assert response.status_code == status.HTTP_400_BAD_REQUEST, response_data
+        assert response_data == {
+            'required_checks_conducted_on': [
+                'Enter the date of the most recent checks',
+            ],
+            'required_checks_conducted_by': [
+                'Enter the person responsible for the most recent checks',
+            ],
+        }

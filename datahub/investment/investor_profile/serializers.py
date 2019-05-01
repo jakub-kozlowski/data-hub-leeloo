@@ -92,8 +92,8 @@ ALL_LARGE_CAPITAL_FIELDS = (
 )
 
 
-class LargeCapitalInvestorProfileSerializer(serializers.ModelSerializer):
-    """Large capital investor profile serializer."""
+class RequiredChecksConductedSerializer(serializers.ModelSerializer):
+    """Required checks conducted serializer."""
 
     default_error_messages = {
         'invalid_required_checks_conducted_on': gettext_lazy(
@@ -106,6 +106,96 @@ class LargeCapitalInvestorProfileSerializer(serializers.ModelSerializer):
             'Enter a value for required checks conducted',
         ),
     }
+
+    required_checks_conducted = NestedRelatedField(
+        RequiredChecksConducted,
+        required=False,
+    )
+
+    required_checks_conducted_by = NestedRelatedField(
+        'company.Advisor',
+        required=False,
+    )
+
+    required_checks_conducted_on = serializers.DateField(
+        required=False,
+    )
+
+    def validate(self, attrs):
+        """
+        Checks if required_checks_conducted is being updated to a value that
+        requires additional information. Due to this being updated the additional
+        information is also needed. If the additional information is not present in
+        the post data then raise a validation error.
+        """
+        errors = {}
+        if 'required_checks_conducted' in attrs:
+            required_checks_conducted_id = str(attrs['required_checks_conducted'].id)
+            if required_checks_conducted_id in REQUIRED_CHECKS_THAT_NEED_ADDITIONAL_INFORMATION:
+                if not attrs.get('required_checks_conducted_on'):
+                    errors['required_checks_conducted_on'] = self.default_error_messages[
+                        'invalid_required_checks_conducted_on'
+                    ]
+                if not attrs.get('required_checks_conducted_by'):
+                    errors['required_checks_conducted_by'] = self.default_error_messages[
+                        'invalid_required_checks_conducted_by'
+                    ]
+        if errors:
+            raise serializers.ValidationError(errors)
+        return super().validate(attrs)
+
+    def update(self, instance, validated_data):
+        """Overriding update to check required checks conducted data."""
+        validated_data = self._update_required_checks_conducted(validated_data)
+        return super().update(instance, validated_data)
+
+    def _update_required_checks_conducted(self, validated_data):
+        """
+        Checks if required checks conducted is being set to a setting that does not require
+        the conditional data. If it is then the conditional fields are blanked.
+        """
+        if 'required_checks_conducted' in validated_data:
+            if (
+                    str(validated_data['required_checks_conducted'].id)
+                    in REQUIRED_CHECKS_THAT_DO_NOT_NEED_ADDITIONAL_INFORMATION
+            ):
+                validated_data['required_checks_conducted_on'] = None
+                validated_data['required_checks_conducted_by'] = None
+        return validated_data
+
+    class Meta:
+        validators = [
+            RulesBasedValidator(
+                ValidationRule(
+                    'invalid_required_checks_conducted_on',
+                    OperatorRule('required_checks_conducted_on', bool),
+                    when=InRule(
+                        'required_checks_conducted',
+                        REQUIRED_CHECKS_THAT_NEED_ADDITIONAL_INFORMATION,
+                    ),
+                ),
+                ValidationRule(
+                    'invalid_required_checks_conducted_by',
+                    OperatorRule('required_checks_conducted_by', bool),
+                    when=InRule(
+                        'required_checks_conducted',
+                        REQUIRED_CHECKS_THAT_NEED_ADDITIONAL_INFORMATION,
+                    ),
+                ),
+                ValidationRule(
+                    'required_checks_conducted_value',
+                    OperatorRule('required_checks_conducted', is_not_blank),
+                    when=AnyIsNotBlankRule(
+                        'required_checks_conducted_by',
+                        'required_checks_conducted_on',
+                    ),
+                ),
+            ),
+        ]
+
+
+class LargeCapitalInvestorProfileSerializer(RequiredChecksConductedSerializer):
+    """Large capital investor profile serializer."""
 
     investor_company = NestedRelatedField(
         Company,
@@ -124,20 +214,6 @@ class LargeCapitalInvestorProfileSerializer(serializers.ModelSerializer):
         InvestorType,
         required=False,
         allow_null=True,
-    )
-
-    required_checks_conducted = NestedRelatedField(
-        RequiredChecksConducted,
-        required=False,
-    )
-
-    required_checks_conducted_by = NestedRelatedField(
-        'company.Advisor',
-        required=False,
-    )
-
-    required_checks_conducted_on = serializers.DateField(
-        required=False,
     )
 
     deal_ticket_sizes = NestedRelatedField(
@@ -244,61 +320,14 @@ class LargeCapitalInvestorProfileSerializer(serializers.ModelSerializer):
             )
         return value
 
-    def update(self, instance, validated_data):
-        """Overriding update to check required checks conducted data."""
-        validated_data = self._update_required_checks_conducted(validated_data)
-        return super().update(instance, validated_data)
-
-    def _update_required_checks_conducted(self, validated_data):
-        """
-        Checks if required checks conducted is being set to a setting that does not require
-        the conditional data. If it is then the conditional fields are blanked.
-        """
-        if 'required_checks_conducted' in validated_data:
-            if (
-                    str(validated_data['required_checks_conducted'].id)
-                    in REQUIRED_CHECKS_THAT_DO_NOT_NEED_ADDITIONAL_INFORMATION
-            ):
-                validated_data['required_checks_conducted_on'] = None
-                validated_data['required_checks_conducted_by'] = None
-        return validated_data
-
     def create(self, validated_data):
         """Overrides the create method to add the large profile type id into the data."""
         validated_data['profile_type_id'] = ProfileTypeConstant.large.value.id
         return super().create(validated_data)
 
-    class Meta:
+    class Meta(RequiredChecksConductedSerializer.Meta):
         model = InvestorProfile
         fields = ALL_LARGE_CAPITAL_FIELDS
-        validators = [
-            RulesBasedValidator(
-                ValidationRule(
-                    'invalid_required_checks_conducted_on',
-                    OperatorRule('required_checks_conducted_on', bool),
-                    when=InRule(
-                        'required_checks_conducted',
-                        REQUIRED_CHECKS_THAT_NEED_ADDITIONAL_INFORMATION,
-                    ),
-                ),
-                ValidationRule(
-                    'invalid_required_checks_conducted_by',
-                    OperatorRule('required_checks_conducted_by', bool),
-                    when=InRule(
-                        'required_checks_conducted',
-                        REQUIRED_CHECKS_THAT_NEED_ADDITIONAL_INFORMATION,
-                    ),
-                ),
-                ValidationRule(
-                    'required_checks_conducted_value',
-                    OperatorRule('required_checks_conducted', is_not_blank),
-                    when=AnyIsNotBlankRule(
-                        'required_checks_conducted_by',
-                        'required_checks_conducted_on',
-                    ),
-                ),
-            ),
-        ]
 
 
 class AssetClassInterestSerializer(ConstantModelSerializer):
