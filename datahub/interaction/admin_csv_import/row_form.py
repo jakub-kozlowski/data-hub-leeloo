@@ -1,8 +1,10 @@
+from enum import IntEnum
+
 from django import forms
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy
 
-from datahub.company.models import Advisor
+from datahub.company.models import Advisor, Contact
 from datahub.core.query_utils import get_full_name_expression
 from datahub.event.models import Event
 from datahub.interaction.models import CommunicationChannel, Interaction
@@ -27,6 +29,14 @@ INTERACTION_CANNOT_HAVE_AN_EVENT_MESSAGE = gettext_lazy(
 def _validate_not_disabled(obj):
     if obj.disabled_on:
         raise ValidationError(OBJECT_DISABLED_MESSAGE, code='object_is_disabled')
+
+
+class ContactMatchingStatus(IntEnum):
+    """The contact matching status of an interaction."""
+
+    matched = 1
+    unmatched = 2
+    multiple_matches = 3
 
 
 class NoDuplicatesModelChoiceField(forms.ModelChoiceField):
@@ -56,6 +66,9 @@ class InteractionCSVRowForm(forms.Form):
 
     kind = forms.ChoiceField(choices=Interaction.KINDS)
     date = forms.DateField(input_formats=['%d/%m/%Y', '%Y-%m-%d'])
+    # Used to attempt to find a matching contact (and company) for the interaction
+    # Note that if a matching contact is not found, the interaction in question is
+    # skipped (and the user informed) rather than the whole process aborting
     contact_email = forms.EmailField()
     # Represents an InteractionDITParticipant for the interaction.
     # The adviser will be looked up by name (case-insensitive) with inactive advisers
@@ -133,6 +146,9 @@ class InteractionCSVRowForm(forms.Form):
         if not subject and service:
             data['subject'] = service.name
 
+        # Attempt to look up the contact
+        self._populate_contact(data)
+
         return data
 
     def _populate_adviser(self, data, adviser_field, team_field):
@@ -143,6 +159,25 @@ class InteractionCSVRowForm(forms.Form):
             )
         except ValidationError as exc:
             self.add_error(adviser_field, exc)
+
+    def _populate_contact(self, data):
+        """
+        Attempts to look up a matching contact by email address.
+
+        The following the logic is used:
+
+        - only non-archived contacts are considered
+        - if a unique match is found using Contact.email, this is used
+        - if there are multiple matches found using Contact.email, matching aborts
+        - otherwise, if there is a unique match on Contact.email_alternative, this is used
+        """
+        contact_email = data.get('contact_email')
+        contact, matching_status = _look_up_contact(contact_email, 'email')
+        if matching_status == ContactMatchingStatus.unmatched:
+            contact, matching_status = _look_up_contact(contact_email, 'email_alternative')
+
+        data['contact'] = contact
+        data['contact_matching_status'] = matching_status
 
 
 def _look_up_adviser(adviser_name, team):
@@ -171,3 +206,27 @@ def _look_up_adviser(adviser_name, team):
         raise ValidationError(ADVISER_NOT_FOUND_MESSAGE, code='adviser_not_found')
     except Advisor.MultipleObjectsReturned:
         raise ValidationError(MULTIPLE_ADVISERS_FOUND_MESSAGE, code='multiple_advisers_found')
+
+
+def _look_up_contact(email_address, lookup_field):
+    """
+    Looks up a contact by email address.
+
+    :param email_address: The email address to find a matching contact for
+    :param lookup_field: The name of the email address field on contact to use for matching
+    """
+    contact = None
+    get_kwargs = {
+        'archived': False,
+        f'{lookup_field}__iexact': email_address,
+    }
+
+    try:
+        contact = Contact.objects.get(**get_kwargs)
+        contact_matching_status = ContactMatchingStatus.matched
+    except Contact.DoesNotExist:
+        contact_matching_status = ContactMatchingStatus.unmatched
+    except Contact.MultipleObjectsReturned:
+        contact_matching_status = ContactMatchingStatus.multiple_matches
+
+    return contact, contact_matching_status

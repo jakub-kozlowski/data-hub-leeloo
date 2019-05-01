@@ -3,12 +3,13 @@ from datetime import date
 
 import pytest
 
-from datahub.company.test.factories import AdviserFactory
+from datahub.company.test.factories import AdviserFactory, ContactFactory
 from datahub.core.test_utils import random_obj_for_queryset
 from datahub.event.test.factories import DisabledEventFactory, EventFactory
 from datahub.interaction.admin_csv_import.row_form import (
     ADVISER_NOT_FOUND_MESSAGE,
     ADVISER_WITH_TEAM_NOT_FOUND_MESSAGE,
+    ContactMatchingStatus,
     INTERACTION_CANNOT_HAVE_AN_EVENT_MESSAGE,
     InteractionCSVRowForm,
     MULTIPLE_ADVISERS_FOUND_MESSAGE,
@@ -18,6 +19,40 @@ from datahub.interaction.models import CommunicationChannel, Interaction
 from datahub.interaction.test.factories import CommunicationChannelFactory
 from datahub.metadata.models import Service
 from datahub.metadata.test.factories import ServiceFactory, TeamFactory
+
+
+EMAIL_MATCHING_CONTACT_TEST_DATA = [
+    {
+        'email': 'unique1@primary.com',
+        'email_alternative': 'unique1@alternative.com',
+        'archived': False,
+    },
+    {
+        'email': 'duplicate@primary.com',
+        'email_alternative': '',
+        'archived': False,
+    },
+    {
+        'email': 'duplicate@primary.com',
+        'email_alternative': '',
+        'archived': False,
+    },
+    {
+        'email': 'unique2@primary.com',
+        'email_alternative': 'duplicate@alternative.com',
+        'archived': False,
+    },
+    {
+        'email': 'unique3@primary.com',
+        'email_alternative': 'duplicate@alternative.com',
+        'archived': False,
+    },
+    {
+        'email': 'archived1@primary.com',
+        'email_alternative': 'archived1@alternative.com',
+        'archived': True,
+    },
+]
 
 
 @pytest.mark.django_db
@@ -472,6 +507,62 @@ class TestInteractionCSVRowForm:
         form = InteractionCSVRowForm(data=data)
         assert not form.errors
         assert form.cleaned_data['subject'] == service.name
+
+    @pytest.mark.parametrize(
+        'input_email,matching_status,match_on_alternative',
+        (
+            # same case, match on email
+            ('unique1@primary.com', ContactMatchingStatus.matched, False),
+            # same case, match on email_alternative
+            ('unique1@alternative.com', ContactMatchingStatus.matched, True),
+            # different case, match on email
+            ('UNIQUE1@PRIMARY.COM', ContactMatchingStatus.matched, False),
+            # different case, match on email_alternative
+            ('UNIQUE1@ALTERNATIVE.COM', ContactMatchingStatus.matched, True),
+            # different
+            ('UNIQUE@COMPANY.IO', ContactMatchingStatus.unmatched, None),
+            # duplicate on email
+            ('duplicate@primary.com', ContactMatchingStatus.multiple_matches, None),
+            # duplicate on email_alternative
+            ('duplicate@alternative.com', ContactMatchingStatus.multiple_matches, None),
+            # archived contact ignored (email value specified)
+            ('archived1@primary.com', ContactMatchingStatus.unmatched, None),
+            # archived contact ignored (email_alternative value specified)
+            ('archived1@alternative.com', ContactMatchingStatus.unmatched, None),
+        ),
+    )
+    def test_contact_lookup(self, input_email, matching_status, match_on_alternative):
+        """Test the matching of contact by email address for various scenarios."""
+        for factory_kwargs in EMAIL_MATCHING_CONTACT_TEST_DATA:
+            ContactFactory(**factory_kwargs)
+
+        adviser = AdviserFactory(first_name='Neptune', last_name='Doris')
+        service = random_obj_for_queryset(
+            Service.objects.filter(disabled_on__isnull=True),
+        )
+
+        data = {
+            'kind': 'interaction',
+            'date': '01/01/2018',
+            'adviser_1': adviser.name,
+            'service': service.name,
+
+            'contact_email': input_email,
+        }
+        form = InteractionCSVRowForm(data=data)
+        assert not form.errors
+
+        assert form.cleaned_data['contact_matching_status'] == matching_status
+
+        assert 'contact' in form.cleaned_data
+        contact = form.cleaned_data['contact']
+
+        if matching_status == ContactMatchingStatus.matched:
+            assert contact
+            actual_email = contact.email_alternative if match_on_alternative else contact.email
+            assert actual_email.lower() == input_email.lower()
+        else:
+            assert not contact
 
 
 def _random_communication_channel(disabled=False):
