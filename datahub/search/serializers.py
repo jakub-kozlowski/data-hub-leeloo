@@ -150,8 +150,4 @@ class AutocompleteSearchQuerySerializer(serializers.Serializer):
     """Serialiser used for the autocomplation search query parameters."""
 
     term = serializers.CharField(required=True, allow_blank=True)
-    country = serializers.ListField(
-        child=serializers.UUIDField(),
-        required=False,
-    )
     limit = serializers.IntegerField(default=10, min_value=1)

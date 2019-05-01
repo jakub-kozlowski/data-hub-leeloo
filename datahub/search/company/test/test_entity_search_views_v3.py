@@ -627,7 +627,28 @@ class TestAutocompleteSearch(APITestMixin):
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
-    def test_response_body(self, setup_es):
+    @pytest.mark.parametrize(
+        'search,expected_number_of_results',
+        (
+            (
+                {'term': 'abc', 'country': constants.UKRegion.north_east.value.id},
+                0,
+            ),
+            (
+                {'term': 'abc', 'country': constants.Country.canada.value.id},
+                1,
+            ),
+            (
+                {'term': 'abc', 'country': constants.Country.ireland.value.id},
+                1,
+            ),
+            (
+                {'term': 'abc', 'country': ''},
+                0,
+            ),
+        ),
+    )
+    def test_response_body(self, setup_es, search, expected_number_of_results):
         """Tests the response body of autocomplete search query."""
         # UK Company to be ignored
         CompanyFactory(
@@ -647,38 +668,41 @@ class TestAutocompleteSearch(APITestMixin):
         url = reverse('api-v3:search:company-autocomplete')
         response = self.api_client.get(
             url,
-            data={'term': 'abc', 'country': Country.canada.value.id},
+            data=search,
         )
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.json() == {
-            'count': 1,
-            'results': [
-                {
-                    'id': str(company.id),
-                    'name': company.name,
-                    'trading_address_1': company.trading_address_1,
-                    'trading_address_2': company.trading_address_2,
-                    'trading_address_county': company.trading_address_county,
-                    'trading_address_postcode': company.trading_address_postcode,
-                    'trading_address_town': company.trading_address_town,
-                    'trading_address_country': {
-                        'id': str(company.trading_address_country.id),
-                        'name': company.trading_address_country.name,
+        if expected_number_of_results:
+            assert response.json() == {
+                'count': 1,
+                'results': [
+                    {
+                        'id': str(company.id),
+                        'name': company.name,
+                        'trading_address_1': company.trading_address_1,
+                        'trading_address_2': company.trading_address_2,
+                        'trading_address_county': company.trading_address_county,
+                        'trading_address_postcode': company.trading_address_postcode,
+                        'trading_address_town': company.trading_address_town,
+                        'trading_address_country': {
+                            'id': str(company.trading_address_country.id),
+                            'name': company.trading_address_country.name,
+                        },
+                        'registered_address_1': company.registered_address_1,
+                        'registered_address_2': company.registered_address_2,
+                        'registered_address_town': company.registered_address_town,
+                        'registered_address_county': company.registered_address_county,
+                        'registered_address_postcode': company.registered_address_postcode,
+                        'registered_address_country': {
+                            'id': str(Country.canada.value.id),
+                            'name': Country.canada.value.name,
+                        },
+                        'trading_names': ['Xyz trading', 'Abc trading'],
                     },
-                    'registered_address_1': company.registered_address_1,
-                    'registered_address_2': company.registered_address_2,
-                    'registered_address_town': company.registered_address_town,
-                    'registered_address_county': company.registered_address_county,
-                    'registered_address_postcode': company.registered_address_postcode,
-                    'registered_address_country': {
-                        'id': str(Country.canada.value.id),
-                        'name': Country.canada.value.name,
-                    },
-                    'trading_names': ['Xyz trading', 'Abc trading'],
-                },
-            ],
-        }
+                ],
+            }
+        else:
+            assert response.json() == {'count': 0, 'results': []}
 
     @pytest.mark.parametrize(
         'data,expected_error',
